@@ -45,6 +45,7 @@ char* WebAns(const char* question) {
 curl_handle = curl_easy_init();
     if(curl_handle) {
         char api_url[512];
+        const char *model = "gemini-2.5-flash-preview-09-2025";
         char json_payload[1024]; 
         const char *api_key = getenv("GEMINI_API_KEY"); // Get API key
         if (!api_key) api_key = ""; 
@@ -56,6 +57,9 @@ curl_handle = curl_easy_init();
         struct curl_slist *headers_list = NULL;
         headers_list = curl_slist_append(headers_list, "Content-Type: application/json");
         curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers_list);
+
+        int written = snprintf(api_url, sizeof(api_url), "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",model, api_key);
+        curl_easy_setopt(curl_handle, CURLOPT_URL, api_url);
 
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteCallback);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
@@ -76,21 +80,18 @@ curl_handle = curl_easy_init();
                  free(chunk.memory);
                  chunk.memory = NULL;
              } else {
-                 // Success! Keep the memory pointer.
                  response_ptr = chunk.memory;
              }
         }
-
-        // Cleanup curl handle and headers
         curl_easy_cleanup(curl_handle);
         if (headers) curl_slist_free_all(headers);
 
     } else {
         fprintf(stderr, "curl_easy_init() failed\n");
-        free(chunk.memory); // Free memory if init failed
+        free(chunk.memory); 
     }
 
-    return response_ptr; // Return pointer to response data (or NULL if error)
+    return response_ptr; // mix of boilerplate and gemini json
 }
 
 char* parseAnswer(const char* json_string){
@@ -98,83 +99,116 @@ char* parseAnswer(const char* json_string){
     json_t *root = json_loads(json_string, 0, &error); // json_loads organises stuff 
     // json_t *root provides the memory address to the structured data (a pointer to json string) which has been structred ny json loads
     // we use pointer because it gives access to the memory address of all data in that function
-    json_t *answer = json_object_get(root, "AbstractText");
-    // free(json_string);
-
-    if (!(json_is_string(answer) && strlen(json_string_value(answer)) > 0))
+    json_t *candidates = json_object_get(root, "candidates");
+    if (!json_is_array(candidates) || json_array_size(candidates) == 0)
     {
-        answer = json_object_get(root, "Answer");
+        printf("Error!");
+        fprintf(stderr, "Error: 'candidates' array not found, not an array, or is empty.\n");
+        json_decref(root);
+        return NULL;
     }
 
-    if (!(json_is_string(answer) && strlen(json_string_value(answer)) > 0))
+    json_t *first_candi = json_array_get(candidates,0);
+
+    json_t *content  = json_object_get(first_candi, "content");
+    json_t *parts = json_object_get(content, "parts");
+    json_t *first_part = json_array_get(parts, 0);
+    json_t *text_found = json_object_get(first_part, "text");
+
+    if (!json_is_string(text_found))
     {
-        json_t *related_topic = json_object_get(root, "RelatedTopics"); // getting array of related topics first
-        if (json_is_array(related_topic) && json_array_size(related_topic) > 0) // check the size and if json is array
-        {
-            size_t num_topics = json_array_size(related_topic);
-            for (int i = 0; i <= 5 && i < num_topics; i++)
-            {
-            json_t *get_topic = json_array_get(related_topic, i); // getting the first topic from the array of topics related
-            
-            if (get_topic == NULL)
-            {
-                continue;
-            }
-            json_t *topic_text = json_object_get(get_topic, "Text");
-            if (json_is_string(topic_text) && strlen(json_string_value(topic_text)) > 0)
-            {
-                answer  = topic_text;
-                break;
-            }
-            // answer = json_object_get(get_topic, "Text"); // gets the specific object type in the array
-            }
-            
-        } 
+        printf("Error!");
+        fprintf(stderr, "Error: 'text_found' array not found, not an array, or is empty.\n");
+        json_decref(root);
+        return NULL;
     }
-    char *result = NULL;
 
-    if(json_is_string(answer) && strlen(json_string_value(answer))>0){
-        result = strdup(json_string_value(answer));
-    }
+    const char *ext_ans = json_string_value(text_found);
+
+    char *final_ans = NULL;
+
+    final_ans = strdup(ext_ans);
 
     json_decref(root);
-    
+    return final_ans;
 
-    // if (json_is_string(answer) && json_string_value(answer) != 0)
+    // json_t *answer = json_object_get(root, "AbstractText");
+    // // free(json_string);
+
+    // if (!(json_is_string(answer) && strlen(json_string_value(answer)) > 0))
     // {
-    //     char *ans = strdup(json_string_value(answer)); // to create a copy of the text cleaned
-    //     json_decref(root);
-    //     return ans;                                    // WET approach = write everything twice (not good)
-    // } else {
-    //     answer = json_object_get(root, "Answer"); // assigning Answer field as answer
-    //     if (json_is_string(answer) && json_string_value(answer) != 0)
-    //     {
-    //       char *ans = strdup(json_string_value(answer)); // to create a copy of the text cleaned
-    //       json_decref(root);
-    //       return ans;
-    //     } else {
-    //         json_t *related_topic = json_object_get(root, "RelatedTopics");
-    //         if (json_is_array(related_topic) && json_array_size(related_topic) > 0)
-    //         {
-    //             json_t *first_topic = json_array_get(related_topic, 0);
-    //             answer  = json_object_get(first_topic, "Text");
-    //             char *ans = strdup(json_string_value(answer)); // to create a copy of the text cleaned
-    //             json_decref(root);
-    //             return ans;
-    //         } else {
-    //             printf("\n An error occurred! ");
-    //             return NULL;
-    //             exit(1);
-    //         }
-            
-    //     }
-        
+    //     answer = json_object_get(root, "Answer");
     // }
 
-        // char *ans = strdup(json_string_value(answer)); // to create a copy of the text cleaned
-        // json_decref(root);
-        // return ans;
-        return result;
+    // if (!(json_is_string(answer) && strlen(json_string_value(answer)) > 0))
+    // {
+    //     json_t *related_topic = json_object_get(root, "RelatedTopics"); // getting array of related topics first
+    //     if (json_is_array(related_topic) && json_array_size(related_topic) > 0) // check the size and if json is array
+    //     {
+    //         size_t num_topics = json_array_size(related_topic);
+    //         for (int i = 0; i <= 5 && i < num_topics; i++)
+    //         {
+    //         json_t *get_topic = json_array_get(related_topic, i); // getting the first topic from the array of topics related
+            
+    //         if (get_topic == NULL)
+    //         {
+    //             continue;
+    //         }
+    //         json_t *topic_text = json_object_get(get_topic, "Text");
+    //         if (json_is_string(topic_text) && strlen(json_string_value(topic_text)) > 0)
+    //         {
+    //             answer  = topic_text;
+    //             break;
+    //         }
+    //         // answer = json_object_get(get_topic, "Text"); // gets the specific object type in the array
+    //         }
+            
+    //     } 
+    // }
+    // char *result = NULL;
+
+    // if(json_is_string(answer) && strlen(json_string_value(answer))>0){
+    //     result = strdup(json_string_value(answer));
+    // }
+
+    // json_decref(root);
+    
+
+    // // if (json_is_string(answer) && json_string_value(answer) != 0)
+    // // {
+    // //     char *ans = strdup(json_string_value(answer)); // to create a copy of the text cleaned
+    // //     json_decref(root);
+    // //     return ans;                                    // WET approach = write everything twice (not good)
+    // // } else {
+    // //     answer = json_object_get(root, "Answer"); // assigning Answer field as answer
+    // //     if (json_is_string(answer) && json_string_value(answer) != 0)
+    // //     {
+    // //       char *ans = strdup(json_string_value(answer)); // to create a copy of the text cleaned
+    // //       json_decref(root);
+    // //       return ans;
+    // //     } else {
+    // //         json_t *related_topic = json_object_get(root, "RelatedTopics");
+    // //         if (json_is_array(related_topic) && json_array_size(related_topic) > 0)
+    // //         {
+    // //             json_t *first_topic = json_array_get(related_topic, 0);
+    // //             answer  = json_object_get(first_topic, "Text");
+    // //             char *ans = strdup(json_string_value(answer)); // to create a copy of the text cleaned
+    // //             json_decref(root);
+    // //             return ans;
+    // //         } else {
+    // //             printf("\n An error occurred! ");
+    // //             return NULL;
+    // //             exit(1);
+    // //         }
+            
+    // //     }
+        
+    // // }
+
+    //     // char *ans = strdup(json_string_value(answer)); // to create a copy of the text cleaned
+    //     // json_decref(root);
+    //     // return ans;
+    //     return result;
 
 
 }
@@ -211,6 +245,7 @@ int main() {
             char *jsonRef = WebAns(userInp); // sending user request to the web & getting raw json data
             if (jsonRef != NULL)
             {
+                printf("--- DEBUG: RAW JSON RECEIVED ---\n%s\n--------------------------------\n", jsonRef);
                 char *clean_ans = parseAnswer(jsonRef); // passing raw data to parseAnswer to get clean answer
                 free(jsonRef);
                 printf("Here is what I could find on the internet: %s \n ", clean_ans);
