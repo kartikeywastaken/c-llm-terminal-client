@@ -1,0 +1,6 @@
+a.out
+.DS_Store
+.vscode/
+config.h
+test_curl.c
+pointer.c
